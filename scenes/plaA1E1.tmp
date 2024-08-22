@@ -237,3 +237,12 @@ animation = &"Fall"
 [node name="CollisionShape2D" type="CollisionShape2D" parent="."]
 position = Vector2(-5, 21)
 shape = SubResource("RectangleShape2D_eoyno")
+
+[node name="dash_timer" type="Timer" parent="."]
+wait_time = 0.2
+
+[node name="dash_cooldown" type="Timer" parent="."]
+wait_time = 0.174
+
+[connection signal="timeout" from="dash_timer" to="." method="_on_dash_timer_timeout"]
+[connection signal="timeout" from="dash_cooldown" to="." method="_on_dash_cooldown_timeout"]

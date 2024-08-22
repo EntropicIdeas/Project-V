@@ -1,101 +1,158 @@
-
 extends CharacterBody2D
 
-@export var SPEED = 100
-@export var JUMP_VELOCITY = -32000
-@export var START_GRAVITY = 1700
-@export var COYOTE_TIME = 140 # in ms
-@export var JUMP_BUFFER_TIME = 100 # in ms
-@export var JUMP_CUT_MULTIPLIER = 0.4
-@export var AIR_HANG_MULTIPLIER = 0.95
-@export var AIR_HANG_THRESHOLD = 50
-@export var Y_SMOOTHING = 0.8
-@export var AIR_X_SMOOTHING = 0.10
-@export var MAX_FALL_SPEED = 25000
-@export var DASHING = false 
-@export var DASH_CD = true
-@export var DASH_SPEED = 400
-@onready var sprite: AnimatedSprite2D = $"AnimatedSprite2D"
+# Constants for the states
+enum State {IDLE, RUN, DASH, JUMP, FALL}
 
-var prevVelocity = Vector2.ZERO
-var lastFloorMsec = 0
-var lastJumpQueueMsec: int
-var gravity = START_GRAVITY
+# Variables for the different states
+var state = State.IDLE
+
+# Movement variables
+var speed := 50
+var run_speed := 100
+var dash_speed := 150
+var jump_force := -200
+var gravity := 500
+var acceleration := 20
+var deceleration := 20
+
+# Jump and air variables
+var jump_time := 0.2
+var max_jump_time := 0.5  # Maximum time the jump can be extended
+var hang_time := 0.1
+var coyote_time := 0.2
+var air_resistance := 0.95
+
+# Timers for coyote and jump buffering
+var coyote_timer = 0.0
+var jump_buffer_timer = 0.0
+
+# Input tracking
+var is_jump_pressed = false
+var is_dash_pressed = false
+var jump_timer = 0.0
+
+# Smooth movement variables
+var target_velocity = Vector2.ZERO
+
+# Animations
+@onready var anim_sprite = $AnimatedSprite2D as AnimatedSprite2D
+
 
 func _ready():
-	set_meta("tag", "player")
+	pass
 
-func _physics_process(delta):
-	var direction = Input.get_axis("ui_left", "ui_right")
-	
+func _process(delta):
+	handle_input()
+	update_state(delta)
+	update_velocity(delta)
+	update_animation()
+
+func handle_input():
+	# Handle movement input
+	target_velocity.x = 0
+	if Input.is_action_pressed("move_right"):
+		target_velocity.x = run_speed if state == State.RUN else speed
+	elif Input.is_action_pressed("move_left"):
+		target_velocity.x = -run_speed if state == State.RUN else -speed
+
+	# Handle dash input
+	if Input.is_action_just_pressed("dash"):
+		is_dash_pressed = true
+
+	# Handle jump input
+	if Input.is_action_just_pressed("jump"):
+		is_jump_pressed = true
+		jump_buffer_timer = jump_time
+		jump_timer = 0.0  # Reset jump timer when jump starts
+
+	if Input.is_action_just_released("jump"):
+		is_jump_pressed = false
+
+func update_state(delta):
+	match state:
+		State.IDLE:
+			if target_velocity.x != 0:
+				state = State.RUN
+			elif is_jump_pressed and coyote_timer > 0:
+				state = State.JUMP
+				velocity.y = jump_force
+				is_jump_pressed = false
+				coyote_timer = 0
+			elif is_dash_pressed:
+				state = State.DASH
+				is_dash_pressed = false
+
+		State.RUN:
+			if target_velocity.x == 0:
+				state = State.IDLE
+			elif is_jump_pressed and coyote_timer > 0:
+				state = State.JUMP
+				velocity.y = jump_force
+				is_jump_pressed = false
+				coyote_timer = 0
+			elif is_dash_pressed:
+				state = State.DASH
+				is_dash_pressed = false
+
+		State.DASH:
+			velocity.x = dash_speed if target_velocity.x > 0 else -dash_speed
+			state = State.IDLE
+
+		State.JUMP:
+			jump_timer += delta
+			if velocity.y >= 0:
+				state = State.FALL
+			elif is_jump_pressed and jump_timer < max_jump_time:
+				velocity.y = lerp(velocity.y, jump_force, jump_timer / max_jump_time)
+
+		State.FALL:
+			if is_on_floor():
+				state = State.IDLE
+			elif is_jump_pressed and jump_buffer_timer > 0:
+				state = State.JUMP
+				velocity.y = jump_force
+				is_jump_pressed = false
+				jump_buffer_timer = 0
+
 	if is_on_floor():
-		lastFloorMsec = Time.get_ticks_msec()
-		if Input.is_action_just_pressed("jump") or (Time.get_ticks_msec() - lastJumpQueueMsec < JUMP_BUFFER_TIME):
-			velocity.y = JUMP_VELOCITY * delta
-			sprite.play("Jump")
-			
-		elif Input.is_action_just_pressed("dash"): # and DASH_CD == true:
-
-			DASHING = true
-			DASH_CD = false
-			$dash_timer.start()
-			$dash_cooldown.start()
-
-			
-		else:
-			if direction == 0:
-				sprite.play("Idle")
-				velocity.x = 0
-			elif DASHING == true:
-				sprite.play("Dash")
-			else:
-				sprite.play("Run")
-				run(direction, delta)
-
+		coyote_timer = coyote_time
 	else:
-		if Input.is_action_just_released("jump"):
-			velocity.y *= JUMP_CUT_MULTIPLIER
+		coyote_timer -= delta
 
-		run(direction, delta)
-		velocity.x = lerp(prevVelocity.x, velocity.x, AIR_X_SMOOTHING)
-		
-		if Input.is_action_just_pressed("jump") and (Time.get_ticks_msec() - lastFloorMsec < COYOTE_TIME):
-			velocity.y = JUMP_VELOCITY * delta
-			sprite.play("Jump")
-		
+	jump_buffer_timer -= delta
+
+func update_velocity(delta):
+	# Apply gravity
+	if state != State.DASH:
 		velocity.y += gravity * delta
-		
-		if abs(velocity.y) < AIR_HANG_THRESHOLD:
-			gravity *= AIR_HANG_MULTIPLIER
-		else:
-			gravity = START_GRAVITY
 
-
-
-	velocity.y = lerp(prevVelocity.y, velocity.y, Y_SMOOTHING)
-	velocity.y = min(velocity.y, MAX_FALL_SPEED * delta)
-	
-	prevVelocity = velocity
-	
-	move_and_slide()
-	
-func run(direction, delta):
-	if DASHING == false:
-		velocity.x = SPEED * direction 
+	# Apply acceleration and deceleration
+	if target_velocity.x != 0:
+		velocity.x = lerp(velocity.x, float(target_velocity.x), acceleration * delta)
 	else:
-		velocity.x = DASH_SPEED * direction
-	if direction != 0:
-		sprite.flip_h = direction < 0
+		velocity.x = lerp(velocity.x, 0.0, deceleration * delta)
 
-func die():
-	velocity.x = 0
-	velocity.y = 0
-	sprite.stop()
-	#sprite.play("dead")
+	# Apply air resistance if in the air
+	if state in [State.JUMP, State.FALL]:
+		velocity.x *= air_resistance
 
+	move_and_slide()
 
-func _on_dash_timer_timeout():
-	DASHING = false 
+func update_animation():
+	# Flip the sprite based on direction
+	if target_velocity.x > 0:
+		anim_sprite.scale.x = 1
+	elif target_velocity.x < 0:
+		anim_sprite.scale.x = -1
 
-func _on_dash_cooldown_timeout():
-	DASH_CD = true
+	match state:
+		State.IDLE:
+			anim_sprite.play("Idle")
+		State.RUN:
+			anim_sprite.play("Run")
+		State.DASH:
+			anim_sprite.play("Dash")
+		State.JUMP:
+			anim_sprite.play("Jump")
+		State.FALL:
+			anim_sprite.play("Fall")
